@@ -478,7 +478,7 @@ while true; do
         8) stop_caddy ;;
         9) update_script ;;
         10) delete_options ;;
-        11) echo -e "${YELLOW}👋 退出。下次使用输入 proxy-easy${NC}"; exit 0 ;;
+        11) echo -e "${YELLOW}👋 退出。下次使用输入 sudo proxy-easy${NC}"; exit 0 ;;
         *) echo "无效选项。" ;;
     esac
 done
