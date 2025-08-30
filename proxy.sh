@@ -160,7 +160,7 @@ new_config() {
     read -p "7. 是否开启双栈监听 (y/n): " enable_dual
     bind_config=""
     if [[ $enable_dual != "y" ]]; then
-        bind_config="bind 0.0.0.1"
+        bind_config="bind 0.0.0.0"
     fi
     
     standard_port=$([[ $enable_tls == "y" ]] && echo 443 || echo 80)
