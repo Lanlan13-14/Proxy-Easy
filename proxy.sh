@@ -21,6 +21,45 @@ CERT_DIR="/etc/ssl/acme"
 sudo mkdir -p "$CERT_DIR"
 mkdir -p "$CONFIG_DIR"
 
+# 函数：检查域名解析
+check_domain_resolution() {
+    local domain=$1
+    echo -e "${GREEN}检查域名 $domain 的解析...${NC}"
+    if command -v dig &>/dev/null; then
+        resolved_ip=$(dig +short "$domain" A)
+        local server_ip=$(curl -s ifconfig.me)
+        if [[ -z "$resolved_ip" ]]; then
+            echo -e "${RED}错误：域名 $domain 未解析到任何 IP 地址！${NC}"
+            return 1
+        elif [[ "$resolved_ip" != *"$server_ip"* ]]; then
+            echo -e "${YELLOW}警告：域名 $domain 解析到 $resolved_ip，但服务器公网 IP 是 $server_ip，可能需要更新 DNS 记录。${NC}"
+        else
+            echo -e "${GREEN}域名 $domain 已正确解析到 $resolved_ip。${NC}"
+        fi
+    else
+        echo -e "${YELLOW}警告：未安装 dig，无法检查域名解析，请手动确保 $domain 指向服务器 IP。${NC}"
+    fi
+    return 0
+}
+
+# 函数：检查端口
+check_port() {
+    local port=$1
+    echo -e "${GREEN}检查端口 $port 是否开放...${NC}"
+    if command -v nc &>/dev/null; then
+        nc -z -w 5 127.0.0.1 "$port" > /dev/null 2>&1
+        if [[ $? -eq 0 ]]; then
+            echo -e "${GREEN}端口 $port 已开放。${NC}"
+        else
+            echo -e "${RED}错误：端口 $port 未开放，请检查防火墙或安全组设置！${NC}"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}警告：未安装 nc，无法检查端口状态，请手动确保 $port 端口开放。${NC}"
+    fi
+    return 0
+}
+
 # 函数：显示菜单
 show_menu() {
     echo -e "${YELLOW}欢迎使用 Proxy-Easy - Caddy 反向代理管理脚本${NC}"
@@ -121,7 +160,7 @@ new_config() {
     read -p "7. 是否开启双栈监听 (y/n): " enable_dual
     bind_config=""
     if [[ $enable_dual != "y" ]]; then
-        bind_config="bind 0.0.0.0"
+        bind_config="bind 0.0.0.1"
     fi
     
     standard_port=$([[ $enable_tls == "y" ]] && echo 443 || echo 80)
@@ -186,6 +225,18 @@ config_cert() {
     read -p "选择验证方式 (1: DNS, 2: HTTP): " validate_method
     read -p "域名: " domain
     
+    # 检查现有证书
+    if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
+        echo -e "${YELLOW}警告：域名 $domain 的证书已存在，无需重新生成。${NC}"
+        return 0
+    fi
+    
+    # 检查域名解析和 80 端口（仅 HTTP 验证）
+    if [[ $validate_method == "2" ]]; then
+        check_domain_resolution "$domain" || return 1
+        check_port 80 || return 1
+    fi
+    
     sudo mkdir -p "$CERT_DIR/$domain"
     
     if [[ $validate_method == "1" ]]; then
@@ -202,6 +253,7 @@ config_cert() {
         else
             echo -e "${RED}DNS 验证证书申请失败，请检查 cert-easy 日志或配置。${NC}"
             sudo rm -rf "$CERT_DIR/$domain"
+            return 1
         fi
     else
         echo "HTTP 验证将通过 Caddy 自动完成，请确保 $domain 已指向本服务器且 80 端口开放。"
@@ -216,16 +268,22 @@ $domain {
 }
 EOF
         echo "正在触发 Caddy HTTP 验证..."
-        caddy run --config "$temp_config" &
+        caddy run --config "$temp_config" --adapter caddyfile &
         caddy_pid=$!
         sleep 10  # 等待 Caddy 完成验证
-        kill $caddy_pid
-        wait $caddy_pid 2>/dev/null
+        # 检查 PID 是否有效
+        if ps -p $caddy_pid > /dev/null; then
+            kill $caddy_pid
+            wait $caddy_pid 2>/dev/null
+        else
+            echo -e "${YELLOW}警告：Caddy 进程 $caddy_pid 已提前退出，可能由于配置错误或验证失败。${NC}"
+        fi
         if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
             echo "证书 $domain 配置成功，存储在 $CERT_DIR/$domain，支持自动续签。"
         else
             echo -e "${RED}HTTP 验证证书申请失败，请检查域名解析或 80 端口。${NC}"
             sudo rm -rf "$CERT_DIR/$domain"
+            return 1
         fi
         rm -f "$temp_config"
     fi
@@ -282,7 +340,7 @@ reload_caddy() {
 # 函数：停止 Caddy
 stop_caddy() {
     echo -e "${RED}⏹️ 停止 Caddy...${NC}"
-    pvek caddy
+    pkill caddy
 }
 
 # 函数：合并所有配置到 Caddyfile
@@ -291,13 +349,13 @@ combine_configs() {
     > "$CADDYFILE"
     cat <<EOF >> "$CADDYFILE"
 {
-  storage file_system $CERT_DIR
+	storage file_system $CERT_DIR
 EOF
     if [ -f "$CONFIG_DIR/.h3_disabled" ]; then
         cat <<EOF >> "$CADDYFILE"
-  servers {
-    protocols h1 h2
-  }
+	servers {
+		protocols h1 h2
+	}
 EOF
     fi
     cat <<EOF >> "$CADDYFILE"
@@ -313,6 +371,14 @@ EOF
     done
     shopt -u nullglob
     if command -v caddy &>/dev/null; then
+        # 格式化 Caddyfile
+        caddy fmt --overwrite "$CADDYFILE" > /dev/null 2>&1
+        if [[ $? -eq 0 ]]; then
+            echo -e "${GREEN}Caddyfile 已格式化。${NC}"
+        else
+            echo -e "${YELLOW}警告：Caddyfile 格式化失败，可能影响美观但不影响功能。${NC}"
+        fi
+        # 验证 Caddyfile 语法
         caddy validate --config "$CADDYFILE" > /dev/null 2>&1
         if [[ $? -ne 0 ]]; then
             echo -e "${RED}Caddyfile 语法验证失败，请检查 $CADDYFILE 内容。${NC}"
