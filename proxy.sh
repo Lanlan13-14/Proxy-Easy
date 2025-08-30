@@ -25,17 +25,16 @@ mkdir -p "$CONFIG_DIR"
 show_menu() {
     echo -e "${YELLOW}欢迎使用 Proxy-Easy - Caddy 反向代理管理脚本${NC}"
     echo "1. 🚀 安装 Caddy"
-    echo "2. 🗑️ 卸载 Caddy"
-    echo "3. 📝 新建 Caddy 配置"
-    echo "4. 🔒 配置证书"
-    echo "5. 🛠️ 管理配置"
-    echo "6. ▶️ 启动 Caddy"
-    echo "7. 🔄 重启 Caddy"
-    echo "8. ♻️ 重载配置"
-    echo "9. ⏹️ 停止 Caddy"
-    echo "10. 📥 更新脚本"
-    echo "11. ❌ 删除选项"
-    echo "12. 👋 退出"
+    echo "2. 📝 新建 Caddy 配置"
+    echo "3. 🔒 配置证书"
+    echo "4. 🛠️ 管理配置"
+    echo "5. ▶️ 启动 Caddy"
+    echo "6. 🔄 重启 Caddy"
+    echo "7. ♻️ 重载配置"
+    echo "8. ⏹️ 停止 Caddy"
+    echo "9. 📥 更新脚本"
+    echo "10. ❌ 删除选项"
+    echo "11. 👋 退出"
     echo -n "请选择选项: "
 }
 
@@ -63,15 +62,6 @@ install_caddy() {
     sudo apt install -y caddy
 
     echo "Caddy 安装完成。"
-}
-
-# 卸载 Caddy
-uninstall_caddy() {
-    echo -e "${RED}🗑️ 卸载 Caddy...${NC}"
-    sudo systemctl disable caddy.service --now 2>/dev/null
-    sudo apt purge -y caddy
-    sudo rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy.list
-    echo "Caddy 卸载完成。"
 }
 
 # 函数：新建配置
@@ -330,10 +320,15 @@ delete_options() {
     read -p "选择: " del_choice
     if [[ $del_choice == "1" ]]; then
         rm "$0"
+        echo "脚本已删除。"
     elif [[ $del_choice == "2" ]]; then
-        uninstall_caddy
+        echo -e "${RED}🗑️ 卸载 Caddy 及相关配置...${NC}"
+        sudo systemctl disable caddy.service --now 2>/dev/null
+        sudo apt purge -y caddy
+        sudo rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy.list
         rm -rf "$CONFIG_DIR" "$CERT_DIR"
         rm "$0"
+        echo "Caddy 及脚本相关配置已删除。"
     fi
 }
 
@@ -343,17 +338,16 @@ while true; do
     read choice
     case $choice in
         1) install_caddy ;;
-        2) uninstall_caddy ;;
-        3) new_config ;;
-        4) config_cert ;;
-        5) manage_config ;;
-        6) start_caddy ;;
-        7) restart_caddy ;;
-        8) reload_caddy ;;
-        9) stop_caddy ;;
-        10) update_script ;;
-        11) delete_options ;;
-        12) echo -e "${YELLOW}👋 退出。下次使用输入 proxy-easy${NC}"; exit 0 ;;
+        2) new_config ;;
+        3) config_cert ;;
+        4) manage_config ;;
+        5) start_caddy ;;
+        6) restart_caddy ;;
+        7) reload_caddy ;;
+        8) stop_caddy ;;
+        9) update_script ;;
+        10) delete_options ;;
+        11) echo -e "${YELLOW}👋 退出。下次使用输入 proxy-easy${NC}"; exit 0 ;;
         *) echo "无效选项。" ;;
     esac
 done
