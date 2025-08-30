@@ -16,6 +16,7 @@ UPDATE_URL="https://raw.githubusercontent.com/Lanlan13-14/Proxy-Easy/refs/heads/
 CONFIG_DIR="$HOME/.caddy_configs"
 CADDYFILE="$CONFIG_DIR/Caddyfile"
 CERT_DIR="/etc/ssl/acme"
+CADDY_CERT_SUBDIR="certificates/acme-v02.api.letsencrypt.org-directory"
 
 # 确保目录存在
 sudo mkdir -p "$CERT_DIR"
@@ -122,19 +123,20 @@ new_config() {
         read -p "选择证书编号 (或输入新域名以通过 Caddy HTTP 验证): " cert_choice
         if [[ $cert_choice =~ ^[0-9]+$ ]]; then
             domain=$(ls "$CERT_DIR" | sed -n "${cert_choice}p")
-            cert_path="$CERT_DIR/$domain/fullchain.pem"
-            # 动态检测密钥文件（支持 key.pem 或 privkey.key）
-            if [[ -f "$CERT_DIR/$domain/key.pem" ]]; then
-                key_path="$CERT_DIR/$domain/key.pem"
-            elif [[ -f "$CERT_DIR/$domain/privkey.key" ]]; then
-                key_path="$CERT_DIR/$domain/privkey.key"
+            # 检查 Caddy 默认路径
+            caddy_cert_path="$CERT_DIR/$CADDY_CERT_SUBDIR/$domain/$domain.crt"
+            caddy_key_path="$CERT_DIR/$CADDY_CERT_SUBDIR/$domain/$domain.key"
+            # 检查自定义路径
+            custom_cert_path="$CERT_DIR/$domain/fullchain.pem"
+            custom_key_path="$CERT_DIR/$domain/privkey.key"
+            if [[ -f "$caddy_cert_path" && -f "$caddy_key_path" ]]; then
+                cert_path="$caddy_cert_path"
+                key_path="$caddy_key_path"
+            elif [[ -f "$custom_cert_path" && -f "$custom_key_path" ]]; then
+                cert_path="$custom_cert_path"
+                key_path="$custom_key_path"
             else
-                echo -e "${RED}错误：未找到密钥文件（$CERT_DIR/$domain/key.pem 或 privkey.key）！${NC}"
-                return 1
-            fi
-            # 验证证书文件是否存在
-            if [[ ! -f "$cert_path" ]]; then
-                echo -e "${RED}错误：证书文件 $cert_path 不存在！${NC}"
+                echo -e "${RED}错误：未找到证书文件（$caddy_cert_path 或 $custom_cert_path）或密钥文件（$caddy_key_path 或 $custom_key_path）！${NC}"
                 return 1
             fi
             tls_config="tls $cert_path $key_path"
@@ -232,7 +234,11 @@ config_cert() {
     read -p "域名: " domain
     
     # 检查现有证书
-    if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
+    caddy_cert_path="$CERT_DIR/$CADDY_CERT_SUBDIR/$domain/$domain.crt"
+    caddy_key_path="$CERT_DIR/$CADDY_CERT_SUBDIR/$domain/$domain.key"
+    custom_cert_path="$CERT_DIR/$domain/fullchain.pem"
+    custom_key_path="$CERT_DIR/$domain/privkey.key"
+    if [[ -f "$caddy_cert_path" && -f "$caddy_key_path" ]] || [[ -f "$custom_cert_path" && -f "$custom_key_path" ]]; then
         echo -e "${YELLOW}警告：域名 $domain 的证书已存在，无需重新生成。${NC}"
         return 0
     fi
@@ -257,12 +263,12 @@ config_cert() {
         sudo bash -c "wget -O /usr/local/bin/cert-easy https://raw.githubusercontent.com/Lanlan13-14/Cert-Easy/refs/heads/main/acme.sh && chmod +x /usr/local/bin/cert-easy && cert-easy"
         if [[ $? -eq 0 ]]; then
             cert-easy --install-cert -d "$domain" \
-                --fullchain-file "$CERT_DIR/$domain/fullchain.pem" \
-                --key-file "$CERT_DIR/$domain/privkey.key" \
+                --fullchain-file "$custom_cert_path" \
+                --key-file "$custom_key_path" \
                 --cert-file "$CERT_DIR/$domain/cert.pem" \
                 --ca-file "$CERT_DIR/$domain/chain.pem" \
                 --reloadcmd "caddy reload --config $CADDYFILE"
-            echo "证书 $domain 配置成功，支持自动续签。"
+            echo "证书 $domain 配置成功，存储在 $CERT_DIR/$domain，支持自动续签。"
         else
             echo -e "${RED}DNS 验证证书申请失败，请检查 cert-easy 日志或配置。${NC}"
             sudo rm -rf "$CERT_DIR/$domain"
@@ -291,10 +297,16 @@ EOF
             kill $caddy_pid
             wait $caddy_pid 2>/dev/null
         else
-            echo -e "${YELLOW}警告：Caddy 进程 $caddy_pid 已提前退出，可能由于配置错误或验证失败。${NC}"
+            echo -e "${YELLOW}警告：Caddy 进程 $caddy_pid 已提前退出，可能已完成证书申请。${NC}"
         fi
-        if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
-            echo "证书 $domain 配置成功，存储在 $CERT_DIR/$domain，支持自动续签。"
+        # 检查 Caddy 默认路径的证书
+        if [[ -f "$caddy_cert_path" && -f "$caddy_key_path" ]]; then
+            echo "证书 $domain 配置成功，存储在 $CERT_DIR/$CADDY_CERT_SUBDIR/$domain/"
+            # 复制到自定义路径，保持格式一致
+            sudo mkdir -p "$CERT_DIR/$domain"
+            sudo cp "$caddy_cert_path" "$custom_cert_path"
+            sudo cp "$caddy_key_path" "$custom_key_path"
+            echo "证书已复制到 $CERT_DIR/$domain/ 作为 fullchain.pem 和 privkey.key"
         else
             echo -e "${RED}HTTP 验证证书申请失败，请检查以下内容：${NC}"
             echo -e "${RED}1. 域名 $domain 是否正确解析到本服务器 IP。${NC}"
