@@ -85,6 +85,11 @@ new_config() {
             domain=$(ls "$CERT_DIR" | sed -n "${cert_choice}p")
             cert_path="$CERT_DIR/$domain/fullchain.pem"
             key_path="$CERT_DIR/$domain/key.pem"
+            # 验证证书文件是否存在
+            if [[ ! -f "$cert_path" || ! -f "$key_path" ]]; then
+                echo -e "${RED}错误：证书文件 $cert_path 或 $key_path 不存在！${NC}"
+                return 1
+            fi
             tls_config="tls $cert_path $key_path"
         else
             domain="$cert_choice"
@@ -140,12 +145,13 @@ new_config() {
     echo "配置文件名: $config_name"
     read -p "确认 (y/n): " confirm
     if [[ $confirm == "y" ]]; then
+        # 生成配置文件，避免多余空行
         cat <<EOF > "$CONFIG_DIR/$config_name"
 $site_address {
-    $tls_config
-    $bind_config
-    reverse_proxy $backend_addr:$backend_port
-    $ws_config
+$tls_config
+$bind_config
+reverse_proxy $backend_addr:$backend_port
+$ws_config
 }
 EOF
         echo "配置 $config_name 生成成功。"
@@ -293,7 +299,8 @@ EOF
     for config in "$CONFIG_DIR"/caddy_*.conf; do
         if [ -f "$config" ]; then
             echo -e "${GREEN}合并配置文件: $config${NC}"
-            cat "$config" >> "$CADDYFILE"
+            # 清理空行和多余空格
+            sed '/^[[:space:]]*$/d' "$config" >> "$CADDYFILE"
         fi
     done
     shopt -u nullglob
