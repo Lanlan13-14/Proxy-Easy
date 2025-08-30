@@ -118,11 +118,15 @@ new_config() {
         else
             site_address="0.0.0.0:$caddy_port"
         fi
+        # 如果没有域名，使用时间戳命名
+        config_name="caddy_[$(date +%s)].conf"
     else
         site_address="$domain"
         if [[ $caddy_port != "$standard_port" ]]; then
             site_address="$domain:$caddy_port"
         fi
+        # 使用域名命名，包裹在 [] 中
+        config_name="caddy_[$domain].conf"
     fi
     
     echo "8. 确认生成配置:"
@@ -133,9 +137,9 @@ new_config() {
     echo "H3: $enable_h3"
     echo "WS: $ws_config"
     echo "双栈: $enable_dual"
+    echo "配置文件名: $config_name"
     read -p "确认 (y/n): " confirm
     if [[ $confirm == "y" ]]; then
-        config_name="config_$(date +%s).conf"
         cat <<EOF > "$CONFIG_DIR/$config_name"
 $site_address {
     $tls_config
@@ -286,7 +290,7 @@ EOF
 }
 EOF
     shopt -s nullglob
-    for config in "$CONFIG_DIR"/*.conf; do
+    for config in "$CONFIG_DIR"/caddy_*.conf; do
         if [ -f "$config" ]; then
             echo -e "${GREEN}合并配置文件: $config${NC}"
             cat "$config" >> "$CADDYFILE"
