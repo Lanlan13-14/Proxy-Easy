@@ -84,10 +84,18 @@ new_config() {
         if [[ $cert_choice =~ ^[0-9]+$ ]]; then
             domain=$(ls "$CERT_DIR" | sed -n "${cert_choice}p")
             cert_path="$CERT_DIR/$domain/fullchain.pem"
-            key_path="$CERT_DIR/$domain/key.pem"
+            # 动态检测密钥文件（支持 key.pem 或 privkey.key）
+            if [[ -f "$CERT_DIR/$domain/key.pem" ]]; then
+                key_path="$CERT_DIR/$domain/key.pem"
+            elif [[ -f "$CERT_DIR/$domain/privkey.key" ]]; then
+                key_path="$CERT_DIR/$domain/privkey.key"
+            else
+                echo -e "${RED}错误：未找到密钥文件（$CERT_DIR/$domain/key.pem 或 privkey.key）！${NC}"
+                return 1
+            fi
             # 验证证书文件是否存在
-            if [[ ! -f "$cert_path" || ! -f "$key_path" ]]; then
-                echo -e "${RED}错误：证书文件 $cert_path 或 $key_path 不存在！${NC}"
+            if [[ ! -f "$cert_path" ]]; then
+                echo -e "${RED}错误：证书文件 $cert_path 不存在！${NC}"
                 return 1
             fi
             tls_config="tls $cert_path $key_path"
@@ -145,7 +153,7 @@ new_config() {
     echo "配置文件名: $config_name"
     read -p "确认 (y/n): " confirm
     if [[ $confirm == "y" ]]; then
-        # 生成配置文件，避免多余空行
+        # 生成配置文件，确保无多余空行
         cat <<EOF > "$CONFIG_DIR/$config_name"
 $site_address {
 $tls_config
@@ -186,9 +194,9 @@ config_cert() {
         if [[ $? -eq 0 ]]; then
             cert-easy --install-cert -d "$domain" \
                 --fullchain-file "$CERT_DIR/$domain/fullchain.pem" \
-                --key-file "$CERT_DIR/$domain/key.pem" \
+                --key-file "$CERT_DIR/$domain/privkey.key" \
                 --cert-file "$CERT_DIR/$domain/cert.pem" \
-                --ca-file "$CERT_DIR/$domain/ca.pem" \
+                --ca-file "$CERT_DIR/$domain/chain.pem" \
                 --reloadcmd "caddy reload --config $CADDYFILE"
             echo "证书 $domain 配置成功，支持自动续签。"
         else
@@ -213,7 +221,7 @@ EOF
         sleep 10  # 等待 Caddy 完成验证
         kill $caddy_pid
         wait $caddy_pid 2>/dev/null
-        if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/key.pem" ]]; then
+        if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
             echo "证书 $domain 配置成功，存储在 $CERT_DIR/$domain，支持自动续签。"
         else
             echo -e "${RED}HTTP 验证证书申请失败，请检查域名解析或 80 端口。${NC}"
@@ -254,7 +262,7 @@ manage_config() {
 start_caddy() {
     echo -e "${GREEN}▶️ 启动 Caddy...${NC}"
     combine_configs
-    caddy run --config "$CADDYFILE" &
+    caddy run --config "$CADDYFILE" --watch &
 }
 
 # 函数：重启 Caddy
@@ -274,7 +282,7 @@ reload_caddy() {
 # 函数：停止 Caddy
 stop_caddy() {
     echo -e "${RED}⏹️ 停止 Caddy...${NC}"
-    pkill caddy
+    pvek caddy
 }
 
 # 函数：合并所有配置到 Caddyfile
