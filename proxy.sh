@@ -140,7 +140,13 @@ new_config() {
             tls_config="tls $cert_path $key_path"
         else
             domain="$cert_choice"
-            tls_config="tls $domain"
+            read -p "请输入用于 Let's Encrypt 的电子邮件地址: " email
+            if [[ -z "$email" ]]; then
+                echo -e "${YELLOW}警告：未提供电子邮件地址，将使用 Caddy 默认设置申请证书。${NC}"
+                tls_config="tls"
+            else
+                tls_config="tls $email"
+            fi
         fi
     fi
     
@@ -235,6 +241,13 @@ config_cert() {
     if [[ $validate_method == "2" ]]; then
         check_domain_resolution "$domain" || return 1
         check_port 80 || return 1
+        read -p "请输入用于 Let's Encrypt 的电子邮件地址: " email
+        if [[ -z "$email" ]]; then
+            echo -e "${YELLOW}警告：未提供电子邮件地址，将使用 Caddy 默认设置申请证书。${NC}"
+            tls_config="tls"
+        else
+            tls_config="tls $email"
+        fi
     fi
     
     sudo mkdir -p "$CERT_DIR/$domain"
@@ -263,10 +276,12 @@ config_cert() {
   storage file_system $CERT_DIR
 }
 $domain {
-  tls $domain
+  $tls_config
   respond "HTTP validation placeholder"
 }
 EOF
+        echo "临时配置文件内容："
+        cat -n "$temp_config"
         echo "正在触发 Caddy HTTP 验证..."
         caddy run --config "$temp_config" --adapter caddyfile &
         caddy_pid=$!
@@ -281,7 +296,10 @@ EOF
         if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
             echo "证书 $domain 配置成功，存储在 $CERT_DIR/$domain，支持自动续签。"
         else
-            echo -e "${RED}HTTP 验证证书申请失败，请检查域名解析或 80 端口。${NC}"
+            echo -e "${RED}HTTP 验证证书申请失败，请检查以下内容：${NC}"
+            echo -e "${RED}1. 域名 $domain 是否正确解析到本服务器 IP。${NC}"
+            echo -e "${RED}2. 80 端口是否开放（检查防火墙或云服务商安全组）。${NC}"
+            echo -e "${RED}3. Caddy 日志是否有其他错误。${NC}"
             sudo rm -rf "$CERT_DIR/$domain"
             return 1
         fi
