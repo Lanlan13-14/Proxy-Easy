@@ -46,16 +46,30 @@ install_caddy() {
         echo "Caddy 已安装。"
         return
     fi
-    curl https://getcaddy.com | bash -s personal
+
+    # 安装依赖
+    sudo apt update
+    sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+
+    # 添加 Caddy 官方仓库
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+      | sudo gpg --dearmor -o /usr/share/keyrings/caddy.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+      | sudo tee /etc/apt/sources.list.d/caddy.list
+
+    # 安装 Caddy
+    sudo apt update
+    sudo apt install -y caddy
+
     echo "Caddy 安装完成。"
 }
 
 # 函数：卸载 Caddy
 uninstall_caddy() {
     echo -e "${RED}🗑️ 卸载 Caddy...${NC}"
-    sudo rm -f /usr/local/bin/caddy /usr/bin/caddy
     sudo systemctl disable caddy.service --now 2>/dev/null
-    sudo pkill -f caddy 2>/dev/null
+    sudo apt purge -y caddy
+    sudo rm -f /usr/share/keyrings/caddy.gpg /etc/apt/sources.list.d/caddy.list
     echo "Caddy 卸载完成。"
 }
 
