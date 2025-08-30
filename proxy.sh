@@ -269,26 +269,42 @@ stop_caddy() {
 
 # 函数：合并所有配置到 Caddyfile
 combine_configs() {
+    echo -e "${GREEN}正在合并配置到 $CADDYFILE...${NC}"
     > "$CADDYFILE"
     cat <<EOF >> "$CADDYFILE"
 {
   storage file_system $CERT_DIR
-}
 EOF
     if [ -f "$CONFIG_DIR/.h3_disabled" ]; then
         cat <<EOF >> "$CADDYFILE"
-{
   servers {
     protocols h1 h2
   }
-}
 EOF
     fi
+    cat <<EOF >> "$CADDYFILE"
+}
+EOF
+    shopt -s nullglob
     for config in "$CONFIG_DIR"/*.conf; do
         if [ -f "$config" ]; then
+            echo -e "${GREEN}合并配置文件: $config${NC}"
             cat "$config" >> "$CADDYFILE"
         fi
     done
+    shopt -u nullglob
+    if command -v caddy &>/dev/null; then
+        caddy validate --config "$CADDYFILE" > /dev/null 2>&1
+        if [[ $? -ne 0 ]]; then
+            echo -e "${RED}Caddyfile 语法验证失败，请检查 $CADDYFILE 内容。${NC}"
+            cat -n "$CADDYFILE"
+            exit 1
+        else
+            echo -e "${GREEN}Caddyfile 语法验证通过。${NC}"
+        fi
+    else
+        echo -e "${YELLOW}未安装 Caddy，无法验证 Caddyfile 语法。${NC}"
+    fi
 }
 
 # 函数：更新脚本
