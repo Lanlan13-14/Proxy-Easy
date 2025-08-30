@@ -46,16 +46,16 @@ install_caddy() {
         echo "Caddy 已安装。"
         return
     fi
-    curl -o caddy https://caddyserver.com/api/download?os=linux&arch=amd64
-    chmod +x caddy
-    sudo mv caddy /usr/bin/caddy
+    curl https://getcaddy.com | bash -s personal
     echo "Caddy 安装完成。"
 }
 
 # 函数：卸载 Caddy
 uninstall_caddy() {
     echo -e "${RED}🗑️ 卸载 Caddy...${NC}"
-    sudo rm -f /usr/bin/caddy
+    sudo rm -f /usr/local/bin/caddy /usr/bin/caddy
+    sudo systemctl disable caddy.service --now 2>/dev/null
+    sudo pkill -f caddy 2>/dev/null
     echo "Caddy 卸载完成。"
 }
 
