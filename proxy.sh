@@ -110,6 +110,34 @@ install_acme() {
     echo -e "${GREEN}✅ 找到 acme.sh 可执行文件。${NC}"
 }
 
+# 函数：停止 Caddy
+stop_caddy_for_cert() {
+    echo -e "${GREEN}停止 Caddy 以释放 80 端口...${NC}"
+    pkill caddy >/dev/null 2>&1
+    sleep 2
+    if pgrep caddy >/dev/null; then
+        echo -e "${RED}错误：无法停止 Caddy 进程，请检查！${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}✅ Caddy 已停止。${NC}"
+}
+
+# 函数：启动 Caddy
+start_caddy_after_cert() {
+    echo -e "${GREEN}启动 Caddy...${NC}"
+    if command -v caddy &>/dev/null && [ -f "$CADDYFILE" ]; then
+        caddy start --config "$CADDYFILE" >/dev/null 2>&1
+        if pgrep caddy >/dev/null; then
+            echo -e "${GREEN}✅ Caddy 已启动。${NC}"
+        else
+            echo -e "${RED}错误：Caddy 启动失败，请检查配置文件 $CADDYFILE！${NC}"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}警告：Caddy 未安装或 Caddyfile 不存在，跳过启动。${NC}"
+    fi
+}
+
 # 函数：显示菜单
 show_menu() {
     echo -e "${YELLOW}欢迎使用 Proxy-Easy - Caddy 反向代理管理脚本${NC}"
@@ -281,14 +309,14 @@ config_cert() {
     check_port 80 || return 1
     configure_firewall
     install_acme || return 1
+    stop_caddy_for_cert || return 1
     echo "HTTP 验证将通过 acme.sh 自动完成，请确保 $domain 已指向本服务器且 80 端口开放。"
-    if ! "$ACME_CMD" --issue --standalone -d "$domain" --server letsencrypt --email "$email" --force \
-        --pre-hook "systemctl stop caddy 2>/dev/null || true" \
-        --post-hook "systemctl start caddy 2>/dev/null || true"; then
+    if ! "$ACME_CMD" --issue --standalone -d "$domain" --server letsencrypt --email "$email" --force; then
         echo -e "${RED}❌ 错误：HTTP 验证证书申请失败。${NC}" >&2
         "$ACME_CMD" --revoke -d "$domain" --server letsencrypt >/dev/null 2>&1 || true
         "$ACME_CMD" --remove -d "$domain" --server letsencrypt >/dev/null 2>&1 || true
         sudo rm -rf "$CERT_DIR/$domain"
+        start_caddy_after_cert
         return 1
     fi
     if sudo "$ACME_CMD" --installcert -d "$domain" \
@@ -301,10 +329,12 @@ config_cert() {
     else
         echo -e "${RED}❌ 错误：证书安装失败！${NC}" >&2
         sudo rm -rf "$CERT_DIR/$domain"
+        start_caddy_after_cert
         return 1
     fi
-    sudo "$ACME_CMD" --install-cronjob >/dev/null 2>&1 || echo -e "${YELLOW}警告：配置 acme.sh 自动续期任务失败，请手动运行 'sudo $ACME_CMD --install-cronjob'。${NC}" >&2
-    echo -e "${GREEN}✅ 自动续期已通过 acme.sh 配置。${NC}"
+    start_caddy_after_cert
+    sudo "$ACME_CMD" --install-cronjob --pre-hook "pkill caddy" --post-hook "caddy start --config $CADDYFILE" >/dev/null 2>&1 || echo -e "${YELLOW}警告：配置 acme.sh 自动续期任务失败，请手动运行 'sudo $ACME_CMD --install-cronjob'。${NC}" >&2
+    echo -e "${GREEN}✅ 自动续期已通过 acme.sh 配置（包含 Caddy 停止/启动）。${NC}"
 }
 
 # 函数：管理证书
@@ -348,12 +378,15 @@ manage_cert() {
                 if [[ -f "$ACME_INSTALL_PATH/$domain/$domain.conf" ]]; then
                     # HTTP 验证的证书
                     install_acme || return 1
+                    stop_caddy_for_cert || return 1
                     if "$ACME_CMD" --renew -d "$domain" --server letsencrypt; then
                         echo -e "${GREEN}证书 $domain 续签成功（HTTP 验证）。${NC}"
                     else
                         echo -e "${RED}错误：证书续签失败（HTTP 验证）！${NC}"
+                        start_caddy_after_cert
                         return 1
                     fi
+                    start_caddy_after_cert
                 else
                     # DNS 验证的证书
                     sudo bash -c "wget -O /usr/local/bin/cert-easy https://raw.githubusercontent.com/Lanlan13-14/Cert-Easy/refs/heads/main/acme.sh && chmod +x /usr/local/bin/cert-easy && cert-easy --renew -d $domain"
@@ -373,12 +406,15 @@ manage_cert() {
             echo -e "${YELLOW}提示：强制续签仅适用于通过 HTTP 验证的证书。${NC}"
             install_acme || return 1
             if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" && -f "$ACME_INSTALL_PATH/$domain/$domain.conf" ]]; then
+                stop_caddy_for_cert || return 1
                 if "$ACME_CMD" --renew -d "$domain" --server letsencrypt --force; then
                     echo -e "${GREEN}证书 $domain 强制续签成功。${NC}"
                 else
                     echo -e "${RED}错误：证书强制续签失败！${NC}"
+                    start_caddy_after_cert
                     return 1
                 fi
+                start_caddy_after_cert
             else
                 echo -e "${RED}错误：未找到 $domain 的证书文件或不是通过 HTTP 验证生成！${NC}"
                 return 1
@@ -386,8 +422,8 @@ manage_cert() {
             ;;
         4)
             install_acme || return 1
-            if sudo "$ACME_CMD" --install-cronjob >/dev/null 2>&1; then
-                echo -e "${GREEN}✅ HTTP 证书自动续签已开启。${NC}"
+            if sudo "$ACME_CMD" --install-cronjob --pre-hook "pkill caddy" --post-hook "caddy start --config $CADDYFILE" >/dev/null 2>&1; then
+                echo -e "${GREEN}✅ HTTP 证书自动续签已开启（包含 Caddy 停止/启动）。${NC}"
             else
                 echo -e "${RED}错误：配置自动续签任务失败，请手动运行 'sudo $ACME_CMD --install-cronjob'。${NC}" >&2
                 return 1
@@ -554,7 +590,7 @@ while true; do
         9) stop_caddy ;;
         10) update_script ;;
         11) delete_options ;;
-        12) echo -e "${YELLOW}👋 退出。下次使用输入 sudo proxy-easy${NC}"; exit 0 ;;
+        12) echo -e "${YELLOW}👋 退出。下次使用输入 proxy-easy${NC}"; exit 0 ;;
         *) echo "无效选项。" ;;
     esac
 done
