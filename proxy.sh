@@ -333,8 +333,12 @@ config_cert() {
         return 1
     fi
     start_caddy_after_cert
-    sudo "$ACME_CMD" --install-cronjob --pre-hook "pkill caddy" --post-hook "caddy start --config $CADDYFILE" >/dev/null 2>&1 || echo -e "${YELLOW}警告：配置 acme.sh 自动续期任务失败，请手动运行 'sudo $ACME_CMD --install-cronjob'。${NC}" >&2
-    echo -e "${GREEN}✅ 自动续期已通过 acme.sh 配置（包含 Caddy 停止/启动）。${NC}"
+    # 配置自动续签，确保新证书移动到指定路径
+    sudo "$ACME_CMD" --install-cronjob \
+        --pre-hook "pkill caddy" \
+        --post-hook "caddy start --config $CADDYFILE && $ACME_CMD --installcert -d $domain --fullchain-file $custom_cert_path --key-file $custom_key_path && chmod 600 $custom_key_path && chown root:root $custom_key_path && caddy reload --config $CADDYFILE 2>/dev/null || true" \
+        >/dev/null 2>&1 || echo -e "${YELLOW}警告：配置 acme.sh 自动续期任务失败，请手动运行 'sudo $ACME_CMD --install-cronjob'。${NC}" >&2
+    echo -e "${GREEN}✅ 自动续期已通过 acme.sh 配置（包含 Caddy 停止/启动和证书更新）。${NC}"
 }
 
 # 函数：管理证书
@@ -379,7 +383,19 @@ manage_cert() {
                     # HTTP 验证的证书
                     install_acme || return 1
                     stop_caddy_for_cert || return 1
+                    custom_cert_path="$CERT_DIR/$domain/fullchain.pem"
+                    custom_key_path="$CERT_DIR/$domain/privkey.key"
                     if "$ACME_CMD" --renew -d "$domain" --server letsencrypt; then
+                        sudo "$ACME_CMD" --installcert -d "$domain" \
+                            --fullchain-file "$custom_cert_path" \
+                            --key-file "$custom_key_path" \
+                            --reloadcmd "caddy reload --config $CADDYFILE 2>/dev/null || true" || {
+                            echo -e "${RED}错误：证书安装失败！${NC}" >&2
+                            start_caddy_after_cert
+                            return 1
+                        }
+                        sudo chmod 600 "$custom_key_path" >/dev/null 2>&1 || echo -e "${YELLOW}警告：设置私钥文件权限失败。${NC}" >&2
+                        sudo chown root:root "$custom_key_path" >/dev/null 2>&1 || echo -e "${YELLOW}警告：设置私钥文件所有者失败。${NC}" >&2
                         echo -e "${GREEN}证书 $domain 续签成功（HTTP 验证）。${NC}"
                     else
                         echo -e "${RED}错误：证书续签失败（HTTP 验证）！${NC}"
@@ -407,7 +423,19 @@ manage_cert() {
             install_acme || return 1
             if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" && -f "$ACME_INSTALL_PATH/$domain/$domain.conf" ]]; then
                 stop_caddy_for_cert || return 1
+                custom_cert_path="$CERT_DIR/$domain/fullchain.pem"
+                custom_key_path="$CERT_DIR/$domain/privkey.key"
                 if "$ACME_CMD" --renew -d "$domain" --server letsencrypt --force; then
+                    sudo "$ACME_CMD" --installcert -d "$domain" \
+                        --fullchain-file "$custom_cert_path" \
+                        --key-file "$custom_key_path" \
+                        --reloadcmd "caddy reload --config $CADDYFILE 2>/dev/null || true" || {
+                        echo -e "${RED}错误：证书安装失败！${NC}" >&2
+                        start_caddy_after_cert
+                        return 1
+                    }
+                    sudo chmod 600 "$custom_key_path" >/dev/null 2>&1 || echo -e "${YELLOW}警告：设置私钥文件权限失败。${NC}" >&2
+                    sudo chown root:root "$custom_key_path" >/dev/null 2>&1 || echo -e "${YELLOW}警告：设置私钥文件所有者失败。${NC}" >&2
                     echo -e "${GREEN}证书 $domain 强制续签成功。${NC}"
                 else
                     echo -e "${RED}错误：证书强制续签失败！${NC}"
@@ -422,8 +450,13 @@ manage_cert() {
             ;;
         4)
             install_acme || return 1
-            if sudo "$ACME_CMD" --install-cronjob --pre-hook "pkill caddy" --post-hook "caddy start --config $CADDYFILE" >/dev/null 2>&1; then
-                echo -e "${GREEN}✅ HTTP 证书自动续签已开启（包含 Caddy 停止/启动）。${NC}"
+            custom_cert_path="$CERT_DIR/$domain/fullchain.pem"
+            custom_key_path="$CERT_DIR/$domain/privkey.key"
+            if sudo "$ACME_CMD" --install-cronjob \
+                --pre-hook "pkill caddy" \
+                --post-hook "caddy start --config $CADDYFILE && $ACME_CMD --installcert -d $domain --fullchain-file $custom_cert_path --key-file $custom_key_path && chmod 600 $custom_key_path && chown root:root $custom_key_path && caddy reload --config $CADDYFILE 2>/dev/null || true" \
+                >/dev/null 2>&1; then
+                echo -e "${GREEN}✅ HTTP 证书自动续签已开启（包含 Caddy 停止/启动和证书更新）。${NC}"
             else
                 echo -e "${RED}错误：配置自动续签任务失败，请手动运行 'sudo $ACME_CMD --install-cronjob'。${NC}" >&2
                 return 1
