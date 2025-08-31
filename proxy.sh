@@ -264,15 +264,18 @@ EOF
 
 # 函数：列出证书
 list_certs() {
-    certs=$(ls "$CERT_DIR" 2>/dev/null)
-    if [[ -z $certs ]]; then
+    local certs=()
+    for dir in "$CERT_DIR"/*; do
+        if [[ -d "$dir" && -f "$dir/fullchain.pem" && -f "$dir/privkey.key" ]]; then
+            certs+=("$(basename "$dir")")
+        fi
+    done
+    if [[ ${#certs[@]} -eq 0 ]]; then
         echo "无可用证书。"
         return
     fi
-    i=1
-    for cert in $certs; do
-        echo "[$i] $cert"
-        ((i++))
+    for i in "${!certs[@]}"; do
+        echo "[$((i+1))] ${certs[i]}"
     done
 }
 
@@ -351,7 +354,13 @@ manage_cert() {
         echo -e "${RED}错误：请输入有效的证书编号！${NC}"
         return 1
     fi
-    domain=$(ls "$CERT_DIR" | sed -n "${cert_choice}p")
+    local certs=()
+    for dir in "$CERT_DIR"/*; do
+        if [[ -d "$dir" && -f "$dir/fullchain.pem" && -f "$dir/privkey.key" ]]; then
+            certs+=("$(basename "$dir")")
+        fi
+    done
+    domain="${certs[$((cert_choice-1))]}"
     if [[ -z "$domain" ]]; then
         echo -e "${RED}错误：未找到选中的证书！${NC}"
         return 1
@@ -379,7 +388,7 @@ manage_cert() {
         2)
             echo -e "${YELLOW}提示：续签方式取决于证书的验证方式（HTTP 使用 acme.sh，DNS 使用 cert-easy）。${NC}"
             if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
-                if [[ -f "$ACME_INSTALL_PATH/$domain/$domain.conf" ]]; then
+                if [[ -f "$ACME_INSTALL_PATH/$domain/$domain.conf" || ! -f "$ACME_INSTALL_PATH/$domain/$domain.cer" ]]; then
                     # HTTP 验证的证书
                     install_acme || return 1
                     stop_caddy_for_cert || return 1
@@ -421,7 +430,7 @@ manage_cert() {
         3)
             echo -e "${YELLOW}提示：强制续签仅适用于通过 HTTP 验证的证书。${NC}"
             install_acme || return 1
-            if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" && -f "$ACME_INSTALL_PATH/$domain/$domain.conf" ]]; then
+            if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" && ( -f "$ACME_INSTALL_PATH/$domain/$domain.conf" || ! -f "$ACME_INSTALL_PATH/$domain/$domain.cer" ) ]]; then
                 stop_caddy_for_cert || return 1
                 custom_cert_path="$CERT_DIR/$domain/fullchain.pem"
                 custom_key_path="$CERT_DIR/$domain/privkey.key"
@@ -645,7 +654,7 @@ while true; do
         9) stop_caddy ;;
         10) update_script ;;
         11) delete_options ;;
-        12) echo -e "${YELLOW}👋 退出。下次使用输入 sudo proxy-easy${NC}"; exit 0 ;;
+        12) echo -e "${YELLOW}👋 退出。下次使用输入 proxy-easy${NC}"; exit 0 ;;
         *) echo "无效选项。" ;;
     esac
 done
