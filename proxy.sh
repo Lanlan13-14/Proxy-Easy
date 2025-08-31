@@ -62,29 +62,41 @@ check_port() {
     return 0
 }
 
+# 函数：获取当前 SSH 端口
+get_ssh_port() {
+    local ssh_port="22"
+    if [[ -f /etc/ssh/sshd_config ]]; then
+        ssh_port=$(grep -E "^Port\s+[0-9]+" /etc/ssh/sshd_config | awk '{print $2}' | head -1)
+        ssh_port=${ssh_port:-22}
+    fi
+    echo "$ssh_port"
+}
+
 # 函数：配置防火墙（仅为 HTTP 验证）
 configure_firewall() {
-    local ssh_port=""
-    read -r -p "请输入当前 SSH 端口（默认 22）以确保防火墙规则不影响 SSH 连接: " ssh_port
-    ssh_port=${ssh_port:-22}
+    local ssh_port=$(get_ssh_port)
     if command -v ufw &>/dev/null && sudo ufw status | grep -q "Status: active"; then
         if ! sudo ufw status | grep -q "$ssh_port/tcp"; then
-            sudo ufw allow "$ssh_port"/tcp comment 'Allow SSH' >/dev/null || echo -e "${YELLOW}警告: 无法添加 UFW $ssh_port/tcp 规则。${NC}" >&2
+            sudo ufw allow "$ssh_port"/tcp comment 'Allow SSH' >/dev/null 2>&1 || echo -e "${YELLOW}警告: 无法添加 UFW $ssh_port/tcp 规则。${NC}" >&2
         fi
         if ! sudo ufw status | grep -q "80/tcp"; then
-            sudo ufw allow 80/tcp comment 'Allow HTTP' >/dev/null || echo -e "${YELLOW}警告: 无法添加 UFW 80/tcp 规则。${NC}" >&2
+            sudo ufw allow 80/tcp comment 'Allow HTTP' >/dev/null 2>&1 || echo -e "${YELLOW}警告: 无法添加 UFW 80/tcp 规则。${NC}" >&2
         fi
         if ! sudo ufw status | grep -q "443/tcp"; then
-            sudo ufw allow 443/tcp comment 'Allow HTTPS' >/dev/null || echo -e "${YELLOW}警告: 无法添加 UFW 443/tcp 规则。${NC}" >&2
+            sudo ufw allow 443/tcp comment 'Allow HTTPS' >/dev/null 2>&1 || echo -e "${YELLOW}警告: 无法添加 UFW 443/tcp 规则。${NC}" >&2
         fi
         echo -e "${GREEN}✅ UFW 规则已更新，开放 $ssh_port, 80 和 443 端口。${NC}"
-    else
-        echo -e "${YELLOW}警告: 未检测到启用的 UFW，请手动确保 $ssh_port, 80 和 443 端口开放（检查防火墙或云服务商安全组）。${NC}" >&2
     fi
 }
 
-# 函数：安装 acme.sh
+# 函数：安装 acme.sh 和 socat
 install_acme() {
+    if ! command -v socat &>/dev/null; then
+        echo -e "${GREEN}安装 socat 依赖...${NC}"
+        sudo apt update >/dev/null 2>&1
+        sudo apt install -y socat >/dev/null 2>&1 || { echo -e "${RED}❌ 错误：安装 socat 失败，请检查网络或包管理器。${NC}" >&2; return 1; }
+        echo -e "${GREEN}✅ socat 安装完成。${NC}"
+    fi
     if [ ! -d "$ACME_INSTALL_PATH" ]; then
         curl -fsSL https://get.acme.sh | sh -s -- home "$ACME_INSTALL_PATH" >/dev/null 2>&1 || { echo -e "${RED}❌ 错误：下载 acme.sh 失败，请检查网络连接${NC}" >&2; return 1; }
         echo -e "${GREEN}✅ acme.sh 下载完成。${NC}"
@@ -267,7 +279,7 @@ config_cert() {
     sudo mkdir -p "$CERT_DIR/$domain"
     check_domain_resolution "$domain" || return 1
     check_port 80 || return 1
-    configure_firewall || return 1
+    configure_firewall
     install_acme || return 1
     echo "HTTP 验证将通过 acme.sh 自动完成，请确保 $domain 已指向本服务器且 80 端口开放。"
     if ! "$ACME_CMD" --issue --standalone -d "$domain" --server letsencrypt --email "$email" --force \
