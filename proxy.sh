@@ -616,8 +616,8 @@ delete_options() {
         echo -e "${YELLOW}警告：将删除 Caddy、证书、acme.sh 配置和本脚本！${NC}"
         read -p "确认删除 (y/n): " confirm
         if [[ $confirm == "y" ]]; then
-            sudo systemctl disable caddy.service --now 2>/dev/null
-            sudo apt purge -y caddy 2>/dev/null
+            sudo systemctl disable caddy.service --now >/dev/null 2>&1
+            sudo apt purge -y caddy >/dev/null 2>&1
             sudo rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy.list
             sudo rm -rf "$CONFIG_DIR" "$CERT_DIR"
             if [[ -f "$ACME_INSTALL_PATH/acme.sh" ]]; then
@@ -628,6 +628,15 @@ delete_options() {
                 done
                 sudo rm -rf "$ACME_INSTALL_PATH"
             fi
+            # 清理 ~/.bashrc 或 ~/.bash_profile 中的 acme.sh.env 引用
+            for profile_file in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+                if [[ -f "$profile_file" ]]; then
+                    if grep -q "acme.sh.env" "$profile_file"; then
+                        sed -i.bak '/acme\.sh\.env/d' "$profile_file"
+                        echo -e "${GREEN}已从 $profile_file 中移除 acme.sh.env 引用。${NC}"
+                    fi
+                fi
+            done
             rm "$0"
             echo -e "${GREEN}Caddy、证书、acme.sh 配置及脚本已删除。${NC}"
             echo -e "${YELLOW}👋 退出。${NC}"
@@ -655,6 +664,6 @@ while true; do
         10) update_script ;;
         11) delete_options ;;
         12) echo -e "${YELLOW}👋 退出。下次使用输入 proxy-easy${NC}"; exit 0 ;;
-        *) echo "无效选项。" ;;
+        *) echo -e "${RED}无效选项。${NC}" ;;
     esac
 done
