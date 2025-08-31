@@ -591,19 +591,41 @@ update_script() {
 delete_options() {
     echo -e "${RED}❌ 删除选项${NC}"
     echo "1. 删除本脚本"
-    echo "2. 删除 Caddy 及本脚本"
+    echo "2. 删除 Caddy、证书及本脚本"
     read -p "选择: " del_choice
     if [[ $del_choice == "1" ]]; then
-        rm "$0"
-        echo "脚本已删除。"
+        echo -e "${YELLOW}警告：即将删除本脚本！${NC}"
+        read -p "确认删除 (y/n): " confirm
+        if [[ $confirm == "y" ]]; then
+            rm "$0"
+            echo -e "${GREEN}脚本已删除。${NC}"
+            echo -e "${YELLOW}👋 退出。${NC}"
+            exit 0
+        fi
     elif [[ $del_choice == "2" ]]; then
-        echo -e "${RED}🗑️ 卸载 Caddy 及相关配置...${NC}"
-        sudo systemctl disable caddy.service --now 2>/dev/null
-        sudo apt purge -y caddy
-        sudo rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy.list
-        rm -rf "$CONFIG_DIR" "$CERT_DIR"
-        rm "$0"
-        echo "Caddy 及脚本相关配置已删除。"
+        echo -e "${RED}🗑️ 卸载 Caddy、证书及相关配置...${NC}"
+        echo -e "${YELLOW}警告：将删除 Caddy、证书、acme.sh 配置和本脚本！${NC}"
+        read -p "确认删除 (y/n): " confirm
+        if [[ $confirm == "y" ]]; then
+            sudo systemctl disable caddy.service --now 2>/dev/null
+            sudo apt purge -y caddy 2>/dev/null
+            sudo rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy.list
+            sudo rm -rf "$CONFIG_DIR" "$CERT_DIR"
+            if [[ -f "$ACME_INSTALL_PATH/acme.sh" ]]; then
+                sudo "$ACME_CMD" --remove-cronjob >/dev/null 2>&1
+                for domain in $(ls "$CERT_DIR" 2>/dev/null); do
+                    "$ACME_CMD" --revoke -d "$domain" --server letsencrypt >/dev/null 2>&1 || true
+                    "$ACME_CMD" --remove -d "$domain" --server letsencrypt >/dev/null 2>&1 || true
+                done
+                sudo rm -rf "$ACME_INSTALL_PATH"
+            fi
+            rm "$0"
+            echo -e "${GREEN}Caddy、证书、acme.sh 配置及脚本已删除。${NC}"
+            echo -e "${YELLOW}👋 退出。${NC}"
+            exit 0
+        fi
+    else
+        echo -e "${RED}错误：无效选项！${NC}"
     fi
 }
 
