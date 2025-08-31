@@ -247,6 +247,12 @@ config_cert() {
         echo -e "${RED}错误：无效的验证方式！${NC}"
         return 1
     fi
+    if [[ $validate_method == "1" ]]; then
+        echo "运行 cert-easy 进行 DNS 验证..."
+        sudo bash -c "wget -O /usr/local/bin/cert-easy https://raw.githubusercontent.com/Lanlan13-14/Cert-Easy/refs/heads/main/acme.sh && chmod +x /usr/local/bin/cert-easy && cert-easy"
+        return $?
+    fi
+    # HTTP 验证
     read -p "请输入域名: " domain
     read -p "请输入用于 Let's Encrypt 的电子邮件地址: " email
     if [[ -z "$email" ]]; then
@@ -259,52 +265,34 @@ config_cert() {
         return 0
     fi
     sudo mkdir -p "$CERT_DIR/$domain"
-    if [[ $validate_method == "2" ]]; then
-        check_domain_resolution "$domain" || return 1
-        check_port 80 || return 1
-        configure_firewall || return 1
-        install_acme || return 1
-        echo "HTTP 验证将通过 acme.sh 自动完成，请确保 $domain 已指向本服务器且 80 端口开放。"
-        if ! "$ACME_CMD" --issue --standalone -d "$domain" --server letsencrypt --email "$email" --force \
-            --pre-hook "systemctl stop caddy 2>/dev/null || true" \
-            --post-hook "systemctl start caddy 2>/dev/null || true"; then
-            echo -e "${RED}❌ 错误：HTTP 验证证书申请失败。${NC}" >&2
-            "$ACME_CMD" --revoke -d "$domain" --server letsencrypt >/dev/null 2>&1 || true
-            "$ACME_CMD" --remove -d "$domain" --server letsencrypt >/dev/null 2>&1 || true
-            sudo rm -rf "$CERT_DIR/$domain"
-            return 1
-        fi
-        if sudo "$ACME_CMD" --installcert -d "$domain" \
-            --fullchain-file "$custom_cert_path" \
-            --key-file "$custom_key_path" \
-            --reloadcmd "caddy reload --config $CADDYFILE 2>/dev/null || true"; then
-            sudo chmod 600 "$custom_key_path" >/dev/null 2>&1 || echo -e "${YELLOW}警告：设置私钥文件权限失败。${NC}" >&2
-            sudo chown root:root "$custom_key_path" >/dev/null 2>&1 || echo -e "${YELLOW}警告：设置私钥文件所有者失败。${NC}" >&2
-            echo "证书 $domain 配置成功，存储在 $CERT_DIR/$domain/"
-        else
-            echo -e "${RED}❌ 错误：证书安装失败！${NC}" >&2
-            sudo rm -rf "$CERT_DIR/$domain"
-            return 1
-        fi
-        sudo "$ACME_CMD" --install-cronjob >/dev/null 2>&1 || echo -e "${YELLOW}警告：配置 acme.sh 自动续期任务失败，请手动运行 'sudo $ACME_CMD --install-cronjob'。${NC}" >&2
-        echo -e "${GREEN}✅ 自动续期已通过 acme.sh 配置。${NC}"
-    elif [[ $validate_method == "1" ]]; then
-        echo "运行 cert-easy 进行 DNS 验证..."
-        sudo bash -c "wget -O /usr/local/bin/cert-easy https://raw.githubusercontent.com/Lanlan13-14/Cert-Easy/refs/heads/main/acme.sh && chmod +x /usr/local/bin/cert-easy && cert-easy"
-        if [[ $? -eq 0 ]]; then
-            cert-easy --install-cert -d "$domain" \
-                --fullchain-file "$custom_cert_path" \
-                --key-file "$custom_key_path" \
-                --cert-file "$CERT_DIR/$domain/cert.pem" \
-                --ca-file "$CERT_DIR/$domain/chain.pem" \
-                --reloadcmd "caddy reload --config $CADDYFILE"
-            echo "证书 $domain 配置成功，存储在 $CERT_DIR/$domain，支持自动续签。"
-        else
-            echo -e "${RED}DNS 验证证书申请失败，请检查 cert-easy 日志或配置。${NC}"
-            sudo rm -rf "$CERT_DIR/$domain"
-            return 1
-        fi
+    check_domain_resolution "$domain" || return 1
+    check_port 80 || return 1
+    configure_firewall || return 1
+    install_acme || return 1
+    echo "HTTP 验证将通过 acme.sh 自动完成，请确保 $domain 已指向本服务器且 80 端口开放。"
+    if ! "$ACME_CMD" --issue --standalone -d "$domain" --server letsencrypt --email "$email" --force \
+        --pre-hook "systemctl stop caddy 2>/dev/null || true" \
+        --post-hook "systemctl start caddy 2>/dev/null || true"; then
+        echo -e "${RED}❌ 错误：HTTP 验证证书申请失败。${NC}" >&2
+        "$ACME_CMD" --revoke -d "$domain" --server letsencrypt >/dev/null 2>&1 || true
+        "$ACME_CMD" --remove -d "$domain" --server letsencrypt >/dev/null 2>&1 || true
+        sudo rm -rf "$CERT_DIR/$domain"
+        return 1
     fi
+    if sudo "$ACME_CMD" --installcert -d "$domain" \
+        --fullchain-file "$custom_cert_path" \
+        --key-file "$custom_key_path" \
+        --reloadcmd "caddy reload --config $CADDYFILE 2>/dev/null || true"; then
+        sudo chmod 600 "$custom_key_path" >/dev/null 2>&1 || echo -e "${YELLOW}警告：设置私钥文件权限失败。${NC}" >&2
+        sudo chown root:root "$custom_key_path" >/dev/null 2>&1 || echo -e "${YELLOW}警告：设置私钥文件所有者失败。${NC}" >&2
+        echo "证书 $domain 配置成功，存储在 $CERT_DIR/$domain/"
+    else
+        echo -e "${RED}❌ 错误：证书安装失败！${NC}" >&2
+        sudo rm -rf "$CERT_DIR/$domain"
+        return 1
+    fi
+    sudo "$ACME_CMD" --install-cronjob >/dev/null 2>&1 || echo -e "${YELLOW}警告：配置 acme.sh 自动续期任务失败，请手动运行 'sudo $ACME_CMD --install-cronjob'。${NC}" >&2
+    echo -e "${GREEN}✅ 自动续期已通过 acme.sh 配置。${NC}"
 }
 
 # 函数：管理证书
@@ -356,17 +344,11 @@ manage_cert() {
                     fi
                 else
                     # DNS 验证的证书
-                    sudo bash -c "wget -O /usr/local/bin/cert-easy https://raw.githubusercontent.com/Lanlan13-14/Cert-Easy/refs/heads/main/acme.sh && chmod +x /usr/local/bin/cert-easy && cert-easy"
+                    sudo bash -c "wget -O /usr/local/bin/cert-easy https://raw.githubusercontent.com/Lanlan13-14/Cert-Easy/refs/heads/main/acme.sh && chmod +x /usr/local/bin/cert-easy && cert-easy --renew -d $domain"
                     if [[ $? -eq 0 ]]; then
-                        cert-easy --renew -d "$domain"
-                        if [[ $? -eq 0 ]]; then
-                            echo -e "${GREEN}证书 $domain 续签成功（DNS 验证）。${NC}"
-                        else
-                            echo -e "${RED}错误：证书续签失败（DNS 验证）！${NC}"
-                            return 1
-                        fi
+                        echo -e "${GREEN}证书 $domain 续签成功（DNS 验证）。${NC}"
                     else
-                        echo -e "${RED}错误：cert-easy 执行失败，无法续签 DNS 验证证书！${NC}"
+                        echo -e "${RED}错误：证书续签失败（DNS 验证）！${NC}"
                         return 1
                     fi
                 fi
