@@ -239,6 +239,14 @@ list_certs() {
 # 函数：申请证书
 config_cert() {
     echo -e "${GREEN}🔒 申请证书${NC}"
+    echo "选择验证方式:"
+    echo "1. DNS 验证"
+    echo "2. HTTP 验证"
+    read -p "请输入选项 (1 或 2): " validate_method
+    if [[ ! $validate_method =~ ^[1-2]$ ]]; then
+        echo -e "${RED}错误：无效的验证方式！${NC}"
+        return 1
+    fi
     read -p "请输入域名: " domain
     read -p "请输入用于 Let's Encrypt 的电子邮件地址: " email
     if [[ -z "$email" ]]; then
@@ -250,17 +258,13 @@ config_cert() {
         echo -e "${YELLOW}警告：域名 $domain 的证书已存在，无需重新生成。${NC}"
         return 0
     fi
-    echo "选择验证方式:"
-    echo "1. DNS 验证"
-    echo "2. HTTP 验证"
-    read -p "请输入选项 (1 或 2): " validate_method
+    sudo mkdir -p "$CERT_DIR/$domain"
     if [[ $validate_method == "2" ]]; then
         check_domain_resolution "$domain" || return 1
         check_port 80 || return 1
         configure_firewall || return 1
         install_acme || return 1
         echo "HTTP 验证将通过 acme.sh 自动完成，请确保 $domain 已指向本服务器且 80 端口开放。"
-        sudo mkdir -p "$CERT_DIR/$domain"
         if ! "$ACME_CMD" --issue --standalone -d "$domain" --server letsencrypt --email "$email" --force \
             --pre-hook "systemctl stop caddy 2>/dev/null || true" \
             --post-hook "systemctl start caddy 2>/dev/null || true"; then
@@ -300,9 +304,6 @@ config_cert() {
             sudo rm -rf "$CERT_DIR/$domain"
             return 1
         fi
-    else
-        echo -e "${RED}错误：无效的验证方式！${NC}"
-        return 1
     fi
 }
 
@@ -323,7 +324,7 @@ manage_cert() {
     fi
     echo "选择操作:"
     echo "1. 删除证书"
-    echo "2. 手动续签证书（仅限 HTTP 验证）"
+    echo "2. 手动续签证书（HTTP 验证使用 acme.sh，DNS 验证使用 cert-easy）"
     echo "3. 强制续签证书（仅限 HTTP 验证）"
     echo "4. 开启 HTTP 证书自动续签"
     echo "5. 关闭 HTTP 证书自动续签"
@@ -342,24 +343,42 @@ manage_cert() {
             fi
             ;;
         2)
-            echo -e "${YELLOW}提示：手动续签仅适用于通过 HTTP 验证的证书。${NC}"
-            install_acme || return 1
+            echo -e "${YELLOW}提示：续签方式取决于证书的验证方式（HTTP 使用 acme.sh，DNS 使用 cert-easy）。${NC}"
             if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
-                if "$ACME_CMD" --renew -d "$domain" --server letsencrypt; then
-                    echo -e "${GREEN}证书 $domain 续签成功。${NC}"
+                if [[ -f "$ACME_INSTALL_PATH/$domain/$domain.conf" ]]; then
+                    # HTTP 验证的证书
+                    install_acme || return 1
+                    if "$ACME_CMD" --renew -d "$domain" --server letsencrypt; then
+                        echo -e "${GREEN}证书 $domain 续签成功（HTTP 验证）。${NC}"
+                    else
+                        echo -e "${RED}错误：证书续签失败（HTTP 验证）！${NC}"
+                        return 1
+                    fi
                 else
-                    echo -e "${RED}错误：证书续签失败！${NC}"
-                    return 1
+                    # DNS 验证的证书
+                    sudo bash -c "wget -O /usr/local/bin/cert-easy https://raw.githubusercontent.com/Lanlan13-14/Cert-Easy/refs/heads/main/acme.sh && chmod +x /usr/local/bin/cert-easy && cert-easy"
+                    if [[ $? -eq 0 ]]; then
+                        cert-easy --renew -d "$domain"
+                        if [[ $? -eq 0 ]]; then
+                            echo -e "${GREEN}证书 $domain 续签成功（DNS 验证）。${NC}"
+                        else
+                            echo -e "${RED}错误：证书续签失败（DNS 验证）！${NC}"
+                            return 1
+                        fi
+                    else
+                        echo -e "${RED}错误：cert-easy 执行失败，无法续签 DNS 验证证书！${NC}"
+                        return 1
+                    fi
                 fi
             else
-                echo -e "${RED}错误：未找到 $domain 的证书文件，可能不是通过 HTTP 验证生成！${NC}"
+                echo -e "${RED}错误：未找到 $domain 的证书文件！${NC}"
                 return 1
             fi
             ;;
         3)
             echo -e "${YELLOW}提示：强制续签仅适用于通过 HTTP 验证的证书。${NC}"
             install_acme || return 1
-            if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" ]]; then
+            if [[ -f "$CERT_DIR/$domain/fullchain.pem" && -f "$CERT_DIR/$domain/privkey.key" && -f "$ACME_INSTALL_PATH/$domain/$domain.conf" ]]; then
                 if "$ACME_CMD" --renew -d "$domain" --server letsencrypt --force; then
                     echo -e "${GREEN}证书 $domain 强制续签成功。${NC}"
                 else
@@ -367,7 +386,7 @@ manage_cert() {
                     return 1
                 fi
             else
-                echo -e "${RED}错误：未找到 $domain 的证书文件，可能不是通过 HTTP 验证生成！${NC}"
+                echo -e "${RED}错误：未找到 $domain 的证书文件或不是通过 HTTP 验证生成！${NC}"
                 return 1
             fi
             ;;
